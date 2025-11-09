@@ -18,7 +18,6 @@ async function loadCategories() {
     menuDropdown.innerHTML = "";
     contentArea.innerHTML = "";
 
-    // create options and containers
     for (const cat of categories) {
       const opt = document.createElement("option");
       opt.value = cat.id;
@@ -30,6 +29,8 @@ async function loadCategories() {
     if (categories.length) {
       menuDropdown.value = String(categories[0].id);
       showCategory(String(categories[0].id));
+    } else {
+      showEmptyMessage();
     }
   } catch (err) {
     console.error("loadCategories failed:", err);
@@ -43,7 +44,7 @@ function showCategory(categoryId) {
   if (container) container.style.display = "block";
 }
 
-// create a new category container (task or routine)
+// create category container (task/routine)
 function createCategoryContainer(cat) {
   const container = document.createElement("div");
   container.id = `container-${cat.id}`;
@@ -53,7 +54,6 @@ function createCategoryContainer(cat) {
   const isTask = cat.type === "task";
   const items = cat.items || [];
 
-  // build inner HTML
   container.innerHTML = `
     <h2>${cat.name}</h2>
     <div class="task-input">
@@ -77,26 +77,21 @@ function createCategoryContainer(cat) {
   const listEl = container.querySelector("ul");
   items.forEach(i => appendItemToList(listEl, i));
 
-  // wire add buttons
+  // add item
   const addBtn = container.querySelector("button");
   addBtn.addEventListener("click", async () => {
     const titleInput = container.querySelector(isTask ? ".taskInput" : ".routineInput");
     const timeInput = container.querySelector(".routineTime");
     const text = titleInput ? titleInput.value.trim() : "";
     const time = timeInput ? timeInput.value : "";
-
     if (!text) return;
+
     try {
       const res = await fetch(`${BASE_URL}/add_item/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          category_id: cat.id,
-          title: text,
-          time: time || null
-        })
+        body: JSON.stringify({ category_id: cat.id, title: text, time: time || null })
       });
-      if (!res.ok) throw new Error("add_item failed");
       const data = await res.json();
       appendItemToList(listEl, data);
     } catch {
@@ -105,7 +100,7 @@ function createCategoryContainer(cat) {
     if (titleInput) titleInput.value = "";
   });
 
-  // wire filters
+  // filters
   container.querySelectorAll(".filter-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       container.querySelectorAll(".filter-btn").forEach(b => b.classList.remove("active"));
@@ -117,7 +112,7 @@ function createCategoryContainer(cat) {
   updateCounts(listEl);
 }
 
-// apply filter (all / active / completed)
+// filter items
 function applyFilter(listEl, filter) {
   listEl.querySelectorAll("li").forEach(li => {
     const isCompleted = li.classList.contains("completed-task");
@@ -130,7 +125,7 @@ function applyFilter(listEl, filter) {
   });
 }
 
-// add new item to list
+// add item to list
 function appendItemToList(listEl, item) {
   const li = document.createElement("li");
   if (item.status === "completed") li.classList.add("completed-task");
@@ -186,7 +181,7 @@ function appendItemToList(listEl, item) {
   updateCounts(listEl);
 }
 
-// update counts on filter buttons
+// update item counts
 function updateCounts(listEl) {
   const container = listEl.closest("div");
   if (!container) return;
@@ -245,7 +240,6 @@ function showInlineAddMenu() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, type })
       });
-      if (!res.ok) throw new Error(`add_category ${res.status}`);
       const data = await res.json();
       categories.push(data);
 
@@ -258,30 +252,26 @@ function showInlineAddMenu() {
       showCategory(String(data.id));
     } catch (err) {
       console.error("add_category failed:", err);
-      alert("Failed to create menu.");
     } finally {
       wrapper.remove();
     }
   });
 }
 
-// delete selected menu
+// delete menu silently (no alert/confirm)
 async function deleteCurrentMenu() {
   const categoryId = menuDropdown.value;
-  if (!categoryId) return alert("Select a menu first!");
+  if (!categoryId) return;
 
   const category = categories.find(c => String(c.id) === String(categoryId));
-  if (!category) return alert("Menu not found.");
-
-  if (!confirm(`Delete "${category.name}" and all items?`)) return;
+  if (!category) return;
 
   try {
-    const res = await fetch(`${BASE_URL}/delete_category/`, {
+    await fetch(`${BASE_URL}/delete_category/`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ category_id: categoryId })
     });
-    if (!res.ok) throw new Error(`delete_category ${res.status}`);
 
     categories = categories.filter(c => String(c.id) !== String(categoryId));
     const opt = menuDropdown.querySelector(`option[value="${categoryId}"]`);
@@ -294,12 +284,17 @@ async function deleteCurrentMenu() {
       menuDropdown.value = String(categories[0].id);
       showCategory(String(categories[0].id));
     } else {
-      contentArea.innerHTML = "<p style='color:#666'>No categories yet. Click Add Menu.</p>";
+      showEmptyMessage("Menu deleted.");
     }
   } catch (err) {
     console.error("delete_category failed:", err);
-    alert("Failed to delete menu.");
+    showEmptyMessage("Failed to delete menu.");
   }
+}
+
+// show empty notice text
+function showEmptyMessage(text = "No menus yet. Click Add Menu.") {
+  contentArea.innerHTML = `<p style="color:#666;text-align:center;margin-top:16px">${text}</p>`;
 }
 
 // buttons
@@ -319,8 +314,8 @@ addMenuBtn.parentNode.insertBefore(deleteMenuBtn, addMenuBtn.nextSibling);
 
 deleteMenuBtn.addEventListener("click", deleteCurrentMenu);
 
-// show category on change
+// show category when dropdown changes
 menuDropdown.addEventListener("change", e => showCategory(e.target.value));
 
-// load data on page start
+// load data
 document.addEventListener("DOMContentLoaded", loadCategories);
