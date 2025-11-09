@@ -1,126 +1,102 @@
+// 🌐 Base URL of your backend API (Render)
 const BASE_URL = "https://smartday-personal-productivity-tracker.onrender.com/api";
 
-// main elements
-const dropdown = document.getElementById("menuDropdown");
-const addBtn = document.getElementById("addMenuBtn");
+// grab important elements
 const contentArea = document.getElementById("contentArea");
+const addMenuBtn = document.getElementById("addMenuBtn");
+const menuDropdown = document.getElementById("menuDropdown");
 
-// counters
-let taskCount = 0;
-let routineCount = 0;
+// keep track of categories
+let categories = [];
 
-// show selected container
-function showSelectedContainer() {
-  const selectedValue = dropdown.value;
-  document.querySelectorAll("#contentArea > div").forEach(div => div.style.display = "none");
-  const selectedContainer = document.getElementById(selectedValue);
-  if (selectedContainer) selectedContainer.style.display = "block";
+// load all categories from server
+async function loadCategories() {
+  try {
+    const res = await fetch(`${BASE_URL}/get_categories/`);
+    if (!res.ok) throw new Error("get_categories failed");
+    const data = await res.json();
+    categories = data;
+
+    menuDropdown.innerHTML = "";
+    data.forEach(cat => {
+      const opt = document.createElement("option");
+      opt.value = cat.id;
+      opt.textContent = cat.name;
+      menuDropdown.appendChild(opt);
+    });
+
+    // show first category automatically
+    if (data.length > 0) {
+      showCategory(data[0].id, data[0].type, data[0].name);
+    }
+  } catch (err) {
+    console.error("loadCategories failed:", err);
+  }
 }
 
-// helper: determine category type from an existing container id
-function getCategoryTypeFromContainer(containerId) {
-  const container = document.getElementById(containerId);
-  if (!container) return "task";
-  return container.classList.contains("taskContainer") ? "task" : "routine";
+// show a category container depending on type
+async function showCategory(categoryId, type, name) {
+  const containerId = `container-${categoryId}`;
+  const oldContainer = document.getElementById(containerId);
+  if (oldContainer) oldContainer.remove();
+
+  try {
+    const res = await fetch(`${BASE_URL}/get_items/${categoryId}/`);
+    const items = res.ok ? await res.json() : [];
+
+    if (type === "task") {
+      createTaskContainer(containerId, name, categoryId, items);
+    } else {
+      createRoutineContainer(containerId, name, categoryId, items);
+    }
+  } catch (err) {
+    console.error("showCategory failed:", err);
+  }
 }
 
-function getCSRFToken() {
-  const match = document.cookie.split('; ').find(row => row.startsWith('csrftoken='));
-  return match ? match.split('=')[1] : '';
-}
-
-// append item and wire backend
+// helper: adds a new item to the list
 function appendItemToList(listEl, item) {
   const li = document.createElement("li");
-  if (item.id) li.dataset.itemId = item.id;
+  li.textContent = item.title;
   if (item.status === "completed") li.classList.add("completed-task");
 
-  const checkbox = document.createElement("input");
-  checkbox.type = "checkbox";
-  checkbox.checked = item.status === "completed";
-
-  checkbox.addEventListener("change", async () => {
-    const isChecked = checkbox.checked;
-    li.classList.toggle("completed-task", isChecked);
-    updateCounts(listEl);
-
-    if (!item.id) return;
-
+  // click to toggle completed
+  li.addEventListener("click", async () => {
+    li.classList.toggle("completed-task");
+    const newStatus = li.classList.contains("completed-task") ? "completed" : "active";
     try {
-      const res = await fetch(`${BASE_URL}/toggle_item/`, {
-        method: "POST",
+      await fetch(`${BASE_URL}/update_item/${item.id}/`, {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ item_id: item.id })
+        body: JSON.stringify({ status: newStatus })
       });
-      if (!res.ok) throw new Error(`toggle_item failed: ${res.status}`);
-      const data = await res.json();
-      const newStatus = data.new_status;
-      checkbox.checked = newStatus === "completed";
-      li.classList.toggle("completed-task", newStatus === "completed");
-      updateCounts(listEl);
     } catch (err) {
-      console.error("toggle_item error:", err);
-      checkbox.checked = !isChecked;
-      li.classList.toggle("completed-task", !isChecked);
-      updateCounts(listEl);
-      alert("Failed to change item status on server.");
+      console.warn("update_item failed (offline mode)");
     }
+    updateCounts(listEl);
   });
 
-  const titleSpan = document.createElement("span");
-  titleSpan.textContent = item.title || "";
-
-  if (item.time) {
-    const timeSpan = document.createElement("span");
-    timeSpan.classList.add("routine-time");
-    timeSpan.textContent = item.time;
-    li.append(checkbox, timeSpan, titleSpan);
-  } else {
-    li.append(checkbox, titleSpan);
-  }
-
-  const delBtn = document.createElement("button");
-  delBtn.innerHTML = "🗑️";
-  delBtn.addEventListener("click", async () => {
-    const nextSibling = li.nextSibling;
-    li.remove();
-    updateCounts(listEl);
-    if (!item.id) return;
-    try {
-      const res = await fetch(`${BASE_URL}/delete_item/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ item_id: item.id })
-      });
-      if (!res.ok) throw new Error(`delete_item failed: ${res.status}`);
-      const data = await res.json();
-      if (data.status !== "ok") throw new Error(data.message || "delete failed");
-    } catch (err) {
-      console.error("delete_item error:", err);
-      if (nextSibling) listEl.insertBefore(li, nextSibling);
-      else listEl.appendChild(li);
-      updateCounts(listEl);
-      alert("Failed to delete item on server.");
-    }
-  });
-
-  li.appendChild(delBtn);
   listEl.appendChild(li);
   updateCounts(listEl);
 }
 
+// helper: update task/routine counts
 function updateCounts(listEl) {
-  const container = listEl.closest("div");
-  if (!container) return;
-  const all = listEl.querySelectorAll("li").length;
-  const completed = listEl.querySelectorAll("li.completed-task").length;
-  const active = all - completed;
-  container.querySelector(".count-all").textContent = all;
-  container.querySelector(".count-active").textContent = active;
-  container.querySelector(".count-completed").textContent = completed;
+  const container = listEl.closest(".taskContainer, .routineContainer");
+  const allCount = container.querySelector(".count-all");
+  const activeCount = container.querySelector(".count-active");
+  const completedCount = container.querySelector(".count-completed");
+
+  const allItems = listEl.querySelectorAll("li").length;
+  const completedItems = listEl.querySelectorAll("li.completed-task").length;
+  const activeItems = allItems - completedItems;
+
+  allCount.textContent = allItems;
+  activeCount.textContent = activeItems;
+  completedCount.textContent = completedItems;
 }
 
-// create task container
+// ✳️ create task container (with filter logic)
 function createTaskContainer(id, title, categoryId, items = []) {
   if (document.getElementById(id)) return;
   const container = document.createElement("div");
@@ -144,12 +120,32 @@ function createTaskContainer(id, title, categoryId, items = []) {
 
   const inputEl = container.querySelector(".taskInput");
   const listEl = container.querySelector(".taskList");
-  const addLocal = container.querySelector(".addTaskBtn");
+  const addBtn = container.querySelector(".addTaskBtn");
+  const filterBtns = container.querySelectorAll(".filter-btn");
+  let currentFilter = "all";
 
-  addLocal.addEventListener("click", async () => {
+  // filter buttons logic
+  filterBtns.forEach(btn => {
+    btn.addEventListener("click", () => {
+      filterBtns.forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentFilter = btn.dataset.filter;
+
+      listEl.querySelectorAll("li").forEach(li => {
+        const done = li.classList.contains("completed-task");
+        if (currentFilter === "all") li.style.display = "";
+        else if (currentFilter === "active") li.style.display = done ? "none" : "";
+        else if (currentFilter === "completed") li.style.display = done ? "" : "none";
+      });
+    });
+  });
+
+  // add new task
+  addBtn.addEventListener("click", async () => {
     const text = inputEl.value.trim();
     if (!text) return;
     const catId = container.dataset.categoryId;
+
     try {
       const res = await fetch(`${BASE_URL}/add_item/`, {
         method: "POST",
@@ -162,15 +158,19 @@ function createTaskContainer(id, title, categoryId, items = []) {
     } catch {
       appendItemToList(listEl, { title: text, status: "active" });
     }
+
     inputEl.value = "";
+    filterBtns.forEach(b => { if (b.dataset.filter === currentFilter) b.click(); });
   });
 
-  inputEl.addEventListener("keypress", e => { if (e.key === "Enter") addLocal.click(); });
+  // press Enter to add
+  inputEl.addEventListener("keypress", e => { if (e.key === "Enter") addBtn.click(); });
+
   items.forEach(i => appendItemToList(listEl, i));
   updateCounts(listEl);
 }
 
-// create routine container (same idea)
+// ✳️ create routine container (similar to task)
 function createRoutineContainer(id, title, categoryId, items = []) {
   if (document.getElementById(id)) return;
   const container = document.createElement("div");
@@ -196,13 +196,33 @@ function createRoutineContainer(id, title, categoryId, items = []) {
   const inputEl = container.querySelector(".routineInput");
   const timeEl = container.querySelector(".routineTime");
   const listEl = container.querySelector(".routineList");
-  const addLocal = container.querySelector(".addRoutineBtn");
+  const addBtn = container.querySelector(".addRoutineBtn");
+  const filterBtns = container.querySelectorAll(".filter-btn");
+  let currentFilter = "all";
 
-  addLocal.addEventListener("click", async () => {
+  // filter buttons logic
+  filterBtns.forEach(btn => {
+    btn.addEventListener("click", () => {
+      filterBtns.forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentFilter = btn.dataset.filter;
+
+      listEl.querySelectorAll("li").forEach(li => {
+        const done = li.classList.contains("completed-task");
+        if (currentFilter === "all") li.style.display = "";
+        else if (currentFilter === "active") li.style.display = done ? "none" : "";
+        else if (currentFilter === "completed") li.style.display = done ? "" : "none";
+      });
+    });
+  });
+
+  // add new routine
+  addBtn.addEventListener("click", async () => {
     const text = inputEl.value.trim();
     const time = timeEl.value;
     if (!text) return;
     const catId = container.dataset.categoryId;
+
     try {
       const res = await fetch(`${BASE_URL}/add_item/`, {
         method: "POST",
@@ -215,80 +235,50 @@ function createRoutineContainer(id, title, categoryId, items = []) {
     } catch {
       appendItemToList(listEl, { title: text, status: "active", time });
     }
+
     inputEl.value = "";
+    filterBtns.forEach(b => { if (b.dataset.filter === currentFilter) b.click(); });
   });
 
-  inputEl.addEventListener("keypress", e => { if (e.key === "Enter") addLocal.click(); });
+  // press Enter to add
+  inputEl.addEventListener("keypress", e => { if (e.key === "Enter") addBtn.click(); });
+
   items.forEach(i => appendItemToList(listEl, i));
   updateCounts(listEl);
 }
 
-// category creation
-async function createCategoryOnServer(name, type) {
-  const res = await fetch(`${BASE_URL}/add_category/`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, type })
-  });
-  if (!res.ok) throw new Error("add_category failed");
-  return await res.json();
-}
+// 🔘 add new category (menu)
+addMenuBtn.addEventListener("click", async () => {
+  const name = prompt("Enter category name:");
+  const type = prompt("Enter type: task or routine").toLowerCase();
+  if (!name || (type !== "task" && type !== "routine")) return;
 
-// initial load
-async function loadCategories() {
   try {
-    const res = await fetch(`${BASE_URL}/get_categories/`);
-    const data = await res.json();
-    dropdown.innerHTML = "";
-    contentArea.innerHTML = "";
-
-    (data.categories || []).forEach(cat => {
-      const option = document.createElement("option");
-      option.value = `cat${cat.id}`;
-      option.textContent = cat.name;
-      dropdown.appendChild(option);
-      if (cat.type === "task")
-        createTaskContainer(option.value, cat.name, cat.id, cat.items || []);
-      else
-        createRoutineContainer(option.value, cat.name, cat.id, cat.items || []);
+    const res = await fetch(`${BASE_URL}/add_category/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, type })
     });
+    if (!res.ok) throw new Error("add_category failed");
+    const data = await res.json();
+    categories.push(data);
 
-    if (dropdown.options.length) {
-      dropdown.value = dropdown.options[0].value;
-      showSelectedContainer();
-    }
-  } catch (err) {
-    console.error("loadCategories failed:", err);
-  }
-}
-
-// add button handler
-addBtn.addEventListener("click", async () => {
-  const selectedType = dropdown.value ? getCategoryTypeFromContainer(dropdown.value) : "task";
-  let name;
-  if (selectedType === "task") {
-    taskCount++;
-    name = `Task ${taskCount}`;
-  } else {
-    routineCount++;
-    name = `Routine ${routineCount}`;
-  }
-
-  try {
-    const data = await createCategoryOnServer(name, selectedType);
-    const value = `cat${data.id}`;
-    const option = document.createElement("option");
-    option.value = value;
-    option.textContent = name;
-    dropdown.appendChild(option);
-    if (selectedType === "task") createTaskContainer(value, name, data.id);
-    else createRoutineContainer(value, name, data.id);
-    dropdown.value = value;
-    showSelectedContainer();
+    const opt = document.createElement("option");
+    opt.value = data.id;
+    opt.textContent = data.name;
+    menuDropdown.appendChild(opt);
+    menuDropdown.value = data.id;
+    showCategory(data.id, data.type, data.name);
   } catch (err) {
     console.error("Failed to create new menu:", err);
   }
 });
 
-dropdown.addEventListener("change", showSelectedContainer);
-document.addEventListener("DOMContentLoaded", loadCategories);
+// 🔁 when selecting category from dropdown
+menuDropdown.addEventListener("change", e => {
+  const selected = categories.find(c => c.id == e.target.value);
+  if (selected) showCategory(selected.id, selected.type, selected.name);
+});
+
+// 🚀 initial load
+loadCategories();
