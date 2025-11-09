@@ -1,4 +1,4 @@
-const BASE_URL = "https://smartday-personal-productivity-tracker.onrender.com";
+const BASE_URL = "https://smartday-personal-productivity-tracker.onrender.com/api";
 
 // main elements
 const dropdown = document.getElementById("menuDropdown");
